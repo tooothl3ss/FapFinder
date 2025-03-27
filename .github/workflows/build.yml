@@ -100,7 +100,12 @@ jobs:
               ASSET_NAME="FapFinder"
             fi
           fi
-          ASSET_PATH=$(realpath dist/$ASSET_NAME)
+          ASSET_PATH="$PWD/dist/$ASSET_NAME"
+          echo "Asset path: $ASSET_PATH"
+          if [ ! -f "$ASSET_PATH" ]; then
+            echo "Error: File not found at $ASSET_PATH"
+            exit 1
+          fi
           echo "::set-output name=asset_path::$ASSET_PATH"
           echo "::set-output name=asset_name::$ASSET_NAME"
 
