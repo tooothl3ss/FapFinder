@@ -29,7 +29,7 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install upx -y
 
-      # Build binary (example uses Go; adjust if needed)
+      # Build binary (example uses Go; adjust as needed)
       - name: Build binary
         shell: bash
         env:
@@ -59,7 +59,7 @@ jobs:
             upx --best app
           fi
 
-      # Rename the binary according to the specified scheme
+      # Rename the binary according to your naming scheme
       - name: Rename binary
         shell: bash
         run: |
@@ -77,10 +77,10 @@ jobs:
             fi
           fi
 
-      # Upload the artifact using the latest version of the action
+      # Upload the artifact with a unique name
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FapFinder${{ matrix.arch }}
+          name: FapFinder-${{ matrix.os }}-${{ matrix.arch }}-${{ github.job }}
           path: |
             FapFinder*
