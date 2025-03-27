@@ -1,33 +1,86 @@
-name: goreleaser
+name: Build
 
 on:
   push:
-    tags:
-    - '*'
-
-permissions:
-  contents: write
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  goreleaser:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        arch: [ x86_64, i386 ]
+    runs-on: ${{ matrix.os }}
+
     steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-      -
-        name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.23.5'
-      -
-        name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v4
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      # Install UPX (different installation per OS)
+      - name: Install UPX on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx
+
+      - name: Install UPX on Windows
+        if: runner.os == 'Windows'
+        run: choco install upx -y
+
+      # Build binary (example uses Go; modify as needed)
+      - name: Build binary
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            if [ "${{ matrix.arch }}" == "i386" ]; then
+              # For 32-bit Windows build
+              GOARCH=386 go build -o app.exe .
+            else
+              # For 64-bit Windows build
+              GOARCH=amd64 go build -o app.exe .
+            fi
+          else
+            if [ "${{ matrix.arch }}" == "i386" ]; then
+              # For 32-bit Linux build
+              GOARCH=386 go build -o app .
+            else
+              # For 64-bit Linux build
+              GOARCH=amd64 go build -o app .
+            fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOS: ${{ matrix.os == 'windows-latest' && 'windows' || 'linux' }}
+
+      # Compress the binary with UPX
+      - name: Compress binary with UPX
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            upx --best app.exe
+          else
+            upx --best app
+          fi
+
+      # Rename the binary as specified
+      - name: Rename binary
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            if [ "${{ matrix.arch }}" == "i386" ]; then
+              mv app.exe FapFinder32.exe
+            else
+              mv app.exe FapFinder.exe
+            fi
+          else
+            if [ "${{ matrix.arch }}" == "i386" ]; then
+              mv app FapFinder32
+            else
+              mv app FapFinder
+            fi
+          fi
+
+      # Upload built binary as an artifact
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: FapFinder-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            FapFinder*
