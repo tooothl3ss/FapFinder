@@ -108,6 +108,18 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Get Release Upload URL
+        id: get_release_url
+        shell: bash
+        run: |
+          echo "Fetching release upload URL for tag ${{ github.ref }}..."
+          upload_url=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.ref }}" | jq -r .upload_url)
+          if [[ "$upload_url" == "null" || -z "$upload_url" ]]; then
+            echo "Error: Release for tag ${{ github.ref }} not found!"
+            exit 1
+          fi
+          echo "upload_url=$upload_url" >> $GITHUB_OUTPUT
+
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
         env:
@@ -117,3 +129,4 @@ jobs:
           asset_path: ${{ needs.build.outputs.asset_path }}
           asset_name: ${{ needs.build.outputs.asset_name }}
           asset_content_type: application/octet-stream
+
