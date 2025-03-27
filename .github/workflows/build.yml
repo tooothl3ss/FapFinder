@@ -108,6 +108,8 @@ jobs:
           fi
           echo "::set-output name=asset_path::$ASSET_PATH"
           echo "::set-output name=asset_name::$ASSET_NAME"
+          ls -la $ASSET_PATH
+          pwd
 
       - name: Get Release Upload URL
         id: get_release_url
