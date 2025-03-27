@@ -39,11 +39,11 @@ jobs:
 
       - name: Compress with UPX
         run: |
-          upx FapFinder-*
+          upx FapFinder*
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: FapFinder-*
+          files: FapFinder*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
