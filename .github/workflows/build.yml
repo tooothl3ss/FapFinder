@@ -97,7 +97,7 @@ jobs:
             if [ "${{ matrix.arch }}" = "i386" ]; then
               ASSET_NAME="FapFinder32"
             else
-              ASSET_NAME="FapFinder64"
+              ASSET_NAME="FapFinder"
             fi
           fi
           ASSET_PATH=$(realpath dist/$ASSET_NAME)
