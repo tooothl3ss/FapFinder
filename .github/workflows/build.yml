@@ -1,49 +1,33 @@
-name: Build & Release FapFinder
+name: goreleaser
 
 on:
   push:
     tags:
-      - 'v*'
+    - '*'
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  goreleaser:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    strategy:
-      matrix:
-        goos: [linux, windows]
-        goarch: [amd64, 386]
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      -
+        name: Checkout
+        uses: actions/checkout@v3
         with:
-          go-version: '1.21'
-
-      - name: Install UPX
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y upx-ucl
-
-      - name: Build binaries
-        run: |
-          output_name=FapFinder${{ matrix.goarch }}
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            output_name="$output_name.exe"
-          fi
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o $output_name
-
-      - name: Compress with UPX
-        run: |
-          upx FapFinder*
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+          fetch-depth: 0
+      -
+        name: Set up Go
+        uses: actions/setup-go@v4
         with:
-          files: FapFinder*
+          go-version: '1.23.5'
+      -
+        name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v4
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
