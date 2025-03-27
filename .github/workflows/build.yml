@@ -103,11 +103,7 @@ jobs:
           ASSET_PATH=$(realpath dist/$ASSET_NAME)
           echo "::set-output name=asset_path::$ASSET_PATH"
           echo "::set-output name=asset_name::$ASSET_NAME"
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
+          
       - name: Get Release Upload URL
         id: get_release_url
         shell: bash
