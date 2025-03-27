@@ -31,6 +31,7 @@ jobs:
 
       # Build binary (example uses Go; adjust if needed)
       - name: Build binary
+        shell: bash
         env:
           GOOS: ${{ matrix.os == 'windows-latest' && 'windows' || 'linux' }}
         run: |
@@ -50,6 +51,7 @@ jobs:
 
       # Compress the binary with UPX
       - name: Compress binary with UPX
+        shell: bash
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             upx --best app.exe
@@ -59,6 +61,7 @@ jobs:
 
       # Rename the binary according to the specified scheme
       - name: Rename binary
+        shell: bash
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             if [ "${{ matrix.arch }}" = "i386" ]; then
