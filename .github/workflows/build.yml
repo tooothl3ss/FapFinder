@@ -18,7 +18,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      # Install UPX (different installation per OS)
       - name: Install UPX on Linux
         if: runner.os == 'Linux'
         run: |
@@ -29,29 +28,23 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install upx -y
 
-      # Build binary (example uses Go; modify as needed)
       - name: Build binary
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             if [ "${{ matrix.arch }}" == "i386" ]; then
-              # For 32-bit Windows build
               GOARCH=386 go build -o app.exe .
             else
-              # For 64-bit Windows build
               GOARCH=amd64 go build -o app.exe .
             fi
           else
             if [ "${{ matrix.arch }}" == "i386" ]; then
-              # For 32-bit Linux build
               GOARCH=386 go build -o app .
             else
-              # For 64-bit Linux build
               GOARCH=amd64 go build -o app .
             fi
         env:
           GOOS: ${{ matrix.os == 'windows-latest' && 'windows' || 'linux' }}
 
-      # Compress the binary with UPX
       - name: Compress binary with UPX
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
@@ -60,7 +53,6 @@ jobs:
             upx --best app
           fi
 
-      # Rename the binary as specified
       - name: Rename binary
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
@@ -77,9 +69,8 @@ jobs:
             fi
           fi
 
-      # Upload built binary as an artifact
       - name: Upload artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: FapFinder-${{ matrix.os }}-${{ matrix.arch }}
           path: |
