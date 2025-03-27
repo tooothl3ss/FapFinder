@@ -73,11 +73,3 @@ jobs:
               mv app FapFinder
             fi
           fi
-
-      # Upload the artifact using the latest version of the action
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: FapFinder-${{ matrix.os }}-${{ matrix.arch }}
-          path: |
-            FapFinder*
