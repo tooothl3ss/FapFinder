@@ -1,5 +1,5 @@
 # FapFinder
-![badge](https://img.shields.io/badge/Built%20for-degenerates-critical?style=flat-square&logo=hell)![NSFW](https://img.shields.io/badge/NSFW-yes-critical?style=flat-square)![Badge](https://img.shields.io/badge/Senpai-approves-blueviolet?style=flat-square)
+![badge](https://img.shields.io/badge/Built%20for-degenerates-critical?style=flat-square&logo=hell) ![NSFW](https://img.shields.io/badge/NSFW-yes-critical?style=flat-square) ![Badge](https://img.shields.io/badge/Senpai-approves-blueviolet?style=flat-square)
 
 > A shameless file extension scanner with needs.  
 > He doesn't search for files. He *craves* them.
