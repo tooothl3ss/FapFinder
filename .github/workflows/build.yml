@@ -1,10 +1,9 @@
-name: Build
+name: Build and Release
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    tags:
+      - 'v*'  # Only run on tag pushes, for example v1.0.0
 
 jobs:
   build:
@@ -13,12 +12,14 @@ jobs:
         os: [ ubuntu-latest, windows-latest ]
         arch: [ x86_64, i386 ]
     runs-on: ${{ matrix.os }}
-
+    outputs:
+      asset_path: ${{ steps.set_asset_path.outputs.asset_path }}
+      asset_name: ${{ steps.set_asset_path.outputs.asset_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      # Install UPX based on runner OS
+      # Install UPX on Linux or Windows
       - name: Install UPX on Linux
         if: runner.os == 'Linux'
         run: |
@@ -29,7 +30,7 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install upx -y
 
-      # Build binary (example uses Go; adjust as needed)
+      # Build binary (example uses Go; adjust for your project)
       - name: Build binary
         shell: bash
         env:
@@ -49,7 +50,7 @@ jobs:
             fi
           fi
 
-      # Compress the binary with UPX
+      # Compress binary with UPX
       - name: Compress binary with UPX
         shell: bash
         run: |
@@ -59,7 +60,7 @@ jobs:
             upx --best app
           fi
 
-      # Rename the binary according to your naming scheme
+      # Rename binary according to your naming scheme
       - name: Rename binary
         shell: bash
         run: |
@@ -76,16 +77,60 @@ jobs:
               mv app FapFinder
             fi
           fi
-      # Move the binary to a dist folder so only it is uploaded
-      - name: Prepare distribution folder
+
+      # Prepare the binary for release (move to a dedicated folder)
+      - name: Prepare dist folder
         shell: bash
         run: |
-          rm -rf *.go
+          mkdir -p dist
+          mv FapFinder* dist/
 
-      # Upload the artifact with a customized name and only the binary file
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      # Set output variables for the release job
+      - name: Set asset path and name
+        id: set_asset_path
+        shell: bash
+        run: |
+          # Choose asset name based on OS and architecture
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            if [ "${{ matrix.arch }}" = "i386" ]; then
+              ASSET_NAME="FapFinder32.exe"
+            else
+              ASSET_NAME="FapFinder.exe"
+            fi
+          else
+            if [ "${{ matrix.arch }}" = "i386" ]; then
+              ASSET_NAME="FapFinder32"
+            else
+              ASSET_NAME="FapFinder64"
+            fi
+          fi
+          # Assume there's only one file in dist
+          ASSET_PATH=$(realpath dist/$ASSET_NAME)
+          echo "::set-output name=asset_path::$ASSET_PATH"
+          echo "::set-output name=asset_name::$ASSET_NAME"
+  
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: FapFinder${{ matrix.os == 'ubuntu-latest' && 'l' || '' }}${{ matrix.arch == 'i386' && '32' || '' }}
-          path: FapFinder*
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
 
+      # Download each build artifact if needed (or use build outputs)
+      - name: Upload Release Asset (Build: ${{ needs.build.outputs.asset_name }})
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ needs.build.outputs.asset_path }}
+          asset_name: ${{ needs.build.outputs.asset_name }}
+          asset_content_type: application/octet-stream
