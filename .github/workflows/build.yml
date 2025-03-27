@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # лимит времени, чтобы GitHub не дропал задачу
+    timeout-minutes: 10
 
     strategy:
       matrix:
@@ -31,16 +31,19 @@ jobs:
 
       - name: Build binaries
         run: |
-          mkdir -p dist
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o dist/FapFinder${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+          output_name=FapFinder${{ matrix.goarch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            output_name="$output_name.exe"
+          fi
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o $output_name
 
       - name: Compress with UPX
         run: |
-          upx dist/*
+          upx FapFinder-*
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: FapFinder-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
