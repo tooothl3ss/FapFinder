@@ -18,6 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
+      # Install UPX based on runner OS
       - name: Install UPX on Linux
         if: runner.os == 'Linux'
         run: |
@@ -28,47 +29,52 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install upx -y
 
+      # Build binary (example uses Go; adjust if needed)
       - name: Build binary
+        env:
+          GOOS: ${{ matrix.os == 'windows-latest' && 'windows' || 'linux' }}
         run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            if [ "${{ matrix.arch }}" == "i386" ]; then
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            if [ "${{ matrix.arch }}" = "i386" ]; then
               GOARCH=386 go build -o app.exe .
             else
               GOARCH=amd64 go build -o app.exe .
             fi
           else
-            if [ "${{ matrix.arch }}" == "i386" ]; then
+            if [ "${{ matrix.arch }}" = "i386" ]; then
               GOARCH=386 go build -o app .
             else
               GOARCH=amd64 go build -o app .
             fi
-        env:
-          GOOS: ${{ matrix.os == 'windows-latest' && 'windows' || 'linux' }}
+          fi
 
+      # Compress the binary with UPX
       - name: Compress binary with UPX
         run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
             upx --best app.exe
           else
             upx --best app
           fi
 
+      # Rename the binary according to the specified scheme
       - name: Rename binary
         run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            if [ "${{ matrix.arch }}" == "i386" ]; then
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            if [ "${{ matrix.arch }}" = "i386" ]; then
               mv app.exe FapFinder32.exe
             else
               mv app.exe FapFinder.exe
             fi
           else
-            if [ "${{ matrix.arch }}" == "i386" ]; then
+            if [ "${{ matrix.arch }}" = "i386" ]; then
               mv app FapFinder32
             else
               mv app FapFinder
             fi
           fi
 
+      # Upload the artifact using the latest version of the action
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
