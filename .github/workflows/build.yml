@@ -32,7 +32,7 @@ jobs:
       - name: Build Binary
         run: |
           mkdir -p dist
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o dist/FapFinder-${{ matrix.goos }}-${{ matrix.goarch }}
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o dist/FapFinder${{ matrix.goarch }}
 
       - name: Compress Binary with UPX
         run: |
