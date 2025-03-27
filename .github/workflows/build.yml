@@ -80,13 +80,12 @@ jobs:
       - name: Prepare distribution folder
         shell: bash
         run: |
-          mkdir -p dist
-          mv FapFinder* dist/
+          rm -rf *.go
 
       # Upload the artifact with a customized name and only the binary file
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: FapFinder${{ matrix.os == 'ubuntu-latest' && 'l' || '' }}${{ matrix.arch == 'i386' && '32' || '' }}
-          path: dist
+          path: FapFinder*
 
