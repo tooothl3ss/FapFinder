@@ -83,22 +83,15 @@ jobs:
           mkdir -p dist
           mv FapFinder* dist/
 
-      - name: Set asset path and name
+      - name: Set asset path and name (Linux)
+        if: runner.os != 'Windows'
         id: set_asset_path
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            if [ "${{ matrix.arch }}" = "i386" ]; then
-              ASSET_NAME="FapFinder32.exe"
-            else
-              ASSET_NAME="FapFinder.exe"
-            fi
+          if [ "${{ matrix.arch }}" = "i386" ]; then
+            ASSET_NAME="FapFinder32"
           else
-            if [ "${{ matrix.arch }}" = "i386" ]; then
-              ASSET_NAME="FapFinder32"
-            else
-              ASSET_NAME="FapFinder"
-            fi
+            ASSET_NAME="FapFinder64"
           fi
           ASSET_PATH="$PWD/dist/$ASSET_NAME"
           echo "Asset path: $ASSET_PATH"
@@ -106,10 +99,32 @@ jobs:
             echo "Error: File not found at $ASSET_PATH"
             exit 1
           fi
-          echo "::set-output name=asset_path::$ASSET_PATH"
-          echo "::set-output name=asset_name::$ASSET_NAME"
-          ls -la $ASSET_PATH
-          pwd
+          echo "asset_path=$ASSET_PATH" >> $GITHUB_OUTPUT
+          echo "asset_name=$ASSET_NAME" >> $GITHUB_OUTPUT
+
+      - name: Set asset path and name (Windows)
+        if: runner.os == 'Windows'
+        id: set_asset_path_win
+        shell: pwsh
+        run: |
+          if ("${{ matrix.arch }}" -eq "i386") {
+            $assetName = "FapFinder32.exe"
+          }
+          else {
+            $assetName = "FapFinder.exe"
+          }
+          # Формируем путь в Windows-стиле
+          $assetPath = Join-Path $env:GITHUB_WORKSPACE "dist\$assetName"
+          Write-Host "Asset path: $assetPath"
+          if (-not (Test-Path $assetPath)) {
+            Write-Error "Error: File not found at $assetPath"
+            exit 1
+          }
+          # Используем механизм с Environment Files для установки output (рекомендуется вместо deprecated set-output)
+          echo "asset_path=$assetPath" >> $env:GITHUB_OUTPUT
+          echo "asset_name=$assetName" >> $env:GITHUB_OUTPUT
+
+
 
       - name: Get Release Upload URL
         id: get_release_url
@@ -129,6 +144,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.get_release_url.outputs.upload_url }}
-          asset_path: ${{ steps.set_asset_path.outputs.asset_path }}
-          asset_name: ${{ steps.set_asset_path.outputs.asset_name }}
+          asset_path: ${{ runner.os == 'Windows' && steps.set_asset_path_win.outputs.asset_path || steps.set_asset_path.outputs.asset_path }}
+          asset_name: ${{ runner.os == 'Windows' && steps.set_asset_path_win.outputs.asset_name || steps.set_asset_path.outputs.asset_name }}
           asset_content_type: application/octet-stream
