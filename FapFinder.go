@@ -6,23 +6,22 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 )
 
-// Твой фирменный баннер
 const banner = `
-  **********************************************
-  *        ^_^ FapFinder v1.1 ^_^              *
-  *   UwU scanning your folders, senpai~       *
-  **********************************************
+  **********************************************
+  *        ^_^ FapFinder v1.2 ^_^              *
+  *   UwU scanning your folders, senpai~       *
+  **********************************************
 `
 
 var defaultPath string
 
 func init() {
-	// Определяем путь по умолчанию в зависимости от ОС
 	if runtime.GOOS == "windows" {
 		defaultPath = "C:\\Users"
 	} else {
@@ -30,7 +29,6 @@ func init() {
 	}
 }
 
-// Проверяет, совпадает ли имя файла с одним из паттернов
 func matchPattern(filename string, patterns []string) bool {
 	for _, pattern := range patterns {
 		matched, err := filepath.Match(pattern, filename)
@@ -41,10 +39,8 @@ func matchPattern(filename string, patterns []string) bool {
 	return false
 }
 
-// Сортировка: файлы .kdbx и .conf отправляются в конец списка
 func prioritySort(files []string) {
 	sort.SliceStable(files, func(i, j int) bool {
-		// Приводим к нижнему регистру для проверки
 		f1 := strings.ToLower(files[i])
 		f2 := strings.ToLower(files[j])
 
@@ -52,23 +48,21 @@ func prioritySort(files []string) {
 		jLow := strings.HasSuffix(f2, ".kdbx") || strings.HasSuffix(f2, ".conf")
 
 		if iLow != jLow {
-			// Если один файл низкоприоритетный, а другой нет -> низкоприоритетный идет позже
 			return !iLow
 		}
-		// В остальных случаях обычная сортировка по алфавиту
 		return files[i] < files[j]
 	})
 }
 
 func main() {
-	// Настройка флагов
 	pathFlag := flag.String("path", defaultPath, fmt.Sprintf("Root path to start scanning from (default: %s)", defaultPath))
-	// Твой список расширений
+
 	defaultExt := "*.txt,*.csv,*.kdbx,*.config,*.conf,*.key,*.rsa,*.ini"
-	extFlag := flag.String("ext", defaultExt, "Comma separated list of file patterns.")
+	extFlag := flag.String("ext", defaultExt, "Comma separated list of file glob patterns.")
+	regexFlag := flag.String("regex", "", "Regex pattern to match filenames (e.g. 'passw.*\\.txt'). Can be used together with -ext.")
+
 	helpFlag := flag.Bool("help", false, "Show help message")
 
-	// Настройка Usage для вывода баннера
 	flag.Usage = func() {
 		fmt.Println(banner)
 		fmt.Printf("Usage: %s [options]\n", os.Args[0])
@@ -82,29 +76,43 @@ func main() {
 		return
 	}
 
-	// Подготовка паттернов поиска
-	rawPatterns := strings.Split(*extFlag, ",")
+	// Компилируем регексп если задан
+	var compiledRegex *regexp.Regexp
+	if *regexFlag != "" {
+		var err error
+		compiledRegex, err = regexp.Compile(*regexFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid regex pattern: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Подготовка glob-паттернов — пропускаем если пользователь не передавал -ext явно
+	usingDefaultExt := *extFlag == defaultExt
 	var patterns []string
-	for _, p := range rawPatterns {
-		patterns = append(patterns, strings.TrimSpace(p))
+	if *extFlag != "" {
+		for _, p := range strings.Split(*extFlag, ",") {
+			patterns = append(patterns, strings.TrimSpace(p))
+		}
 	}
 
 	var filesFound []string
 
-	// Используем стандартный WalkDir — это надежнее, чем ручная рекурсия с горутинами
 	err := filepath.WalkDir(*pathFlag, func(path string, d fs.DirEntry, err error) error {
-		// Если у нас нет прав на чтение папки, просто пропускаем её (без паники и ошибок в консоль)
 		if err != nil {
 			return filepath.SkipDir
 		}
-
-		// Если это папка, идем дальше
 		if d.IsDir() {
 			return nil
 		}
 
-		// Проверяем имя файла на совпадение с расширениями
-		if matchPattern(d.Name(), patterns) {
+		name := d.Name()
+
+		// OR-логика: файл подходит если совпал glob ИЛИ regex
+		matchedExt := matchPattern(name, patterns)
+		matchedRegex := compiledRegex != nil && compiledRegex.MatchString(name)
+
+		if matchedExt || matchedRegex {
 			filesFound = append(filesFound, path)
 		}
 
@@ -112,19 +120,16 @@ func main() {
 	})
 
 	if err != nil {
-		// Выводим ошибку, только если упал сам процесс обхода (редко)
 		fmt.Fprintf(os.Stderr, "Error walking the path: %v\n", err)
 	}
 
-	// Если используется стандартный список, применяем твою хитрую сортировку
-	if *extFlag == defaultExt {
+	// Приоритетная сортировка только если используется дефолтный список расширений
+	if usingDefaultExt {
 		prioritySort(filesFound)
 	} else {
-		// Иначе просто сортируем по алфавиту для красоты
 		sort.Strings(filesFound)
 	}
 
-	// Вывод результатов
 	for _, file := range filesFound {
 		fmt.Println(file)
 	}
