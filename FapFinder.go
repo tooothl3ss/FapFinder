@@ -55,12 +55,11 @@ func prioritySort(files []string) {
 }
 
 func main() {
-	pathFlag := flag.String("path", defaultPath, fmt.Sprintf("Root path to start scanning from (default: %s)", defaultPath))
-
 	defaultExt := "*.txt,*.csv,*.kdbx,*.config,*.conf,*.key,*.rsa,*.ini"
-	extFlag := flag.String("ext", defaultExt, "Comma separated list of file glob patterns.")
-	regexFlag := flag.String("regex", "", "Regex pattern to match filenames (e.g. 'passw.*\\.txt'). Can be used together with -ext.")
 
+	pathFlag := flag.String("path", defaultPath, fmt.Sprintf("Root path to start scanning from (default: %s)", defaultPath))
+	extFlag := flag.String("ext", defaultExt, "Comma separated list of file glob patterns.")
+	regexFlag := flag.String("regex", "", "Regex pattern to match filenames (e.g. '.*key.*'). Can be combined with -ext.")
 	helpFlag := flag.Bool("help", false, "Show help message")
 
 	flag.Usage = func() {
@@ -87,14 +86,34 @@ func main() {
 		}
 	}
 
-	// Подготовка glob-паттернов — пропускаем если пользователь не передавал -ext явно
-	usingDefaultExt := *extFlag == defaultExt
+	// Определяем, передал ли пользователь -ext явно
+	extProvided := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "ext" {
+			extProvided = true
+		}
+	})
+
+	// Glob-паттерны:
+	// - если -ext передан явно — используем его
+	// - если ни -ext ни -regex не переданы — используем дефолтный список
+	// - если передан только -regex — glob не используем вообще
 	var patterns []string
-	if *extFlag != "" {
-		for _, p := range strings.Split(*extFlag, ",") {
+	if extProvided {
+		if *extFlag != "" {
+			for _, p := range strings.Split(*extFlag, ",") {
+				patterns = append(patterns, strings.TrimSpace(p))
+			}
+		}
+	} else if compiledRegex == nil {
+		// Дефолтное поведение без флагов
+		for _, p := range strings.Split(defaultExt, ",") {
 			patterns = append(patterns, strings.TrimSpace(p))
 		}
 	}
+
+	// Приоритетная сортировка только при дефолтном запуске
+	usingDefaultSort := !extProvided && compiledRegex == nil
 
 	var filesFound []string
 
@@ -108,7 +127,6 @@ func main() {
 
 		name := d.Name()
 
-		// OR-логика: файл подходит если совпал glob ИЛИ regex
 		matchedExt := matchPattern(name, patterns)
 		matchedRegex := compiledRegex != nil && compiledRegex.MatchString(name)
 
@@ -123,8 +141,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error walking the path: %v\n", err)
 	}
 
-	// Приоритетная сортировка только если используется дефолтный список расширений
-	if usingDefaultExt {
+	if usingDefaultSort {
 		prioritySort(filesFound)
 	} else {
 		sort.Strings(filesFound)
