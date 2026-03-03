@@ -238,6 +238,7 @@ func main() {
 	outFlag := flag.String("out", "", "Write results to file (e.g. -out results.txt)")
 	helpFlag := flag.Bool("help", false, "Show help")
 
+	flag.CommandLine.SetOutput(os.Stdout)
 	flag.Usage = func() {
 		fmt.Println(banner)
 		fmt.Printf("Usage: %s [options]\n\n", os.Args[0])
@@ -249,7 +250,7 @@ func main() {
 		fmt.Printf("  %s -ext '*.pem,*.key' -no-ext       # custom extensions + extensionless files\n", os.Args[0])
 		fmt.Printf("  %s -path /opt,/srv -names            # custom paths, known filenames only\n", os.Args[0])
 		fmt.Printf("  %s -regex '.*\\.db$' -ext '*.sql'    # regex + glob combined\n", os.Args[0])
-		fmt.Printf("  %s -out results.txt                     # save results to file\n", os.Args[0])
+		fmt.Printf("  %s -exclude 'C:\\Temp' -out res.txt  # exclude dir + save to file\n", os.Args[0])
 	}
 
 	flag.Parse()
@@ -299,11 +300,15 @@ func main() {
 	if !customPaths {
 		excludeDirs = append(excludeDirs, defaultExclude...)
 	}
+
+	// User-specified excludes (these take priority over default force-includes)
+	var userExcludes []string
 	if *excludeFlag != "" {
 		for _, d := range strings.Split(*excludeFlag, ",") {
 			d = strings.TrimSpace(d)
 			if d != "" {
 				excludeDirs = append(excludeDirs, d)
+				userExcludes = append(userExcludes, d)
 			}
 		}
 	}
@@ -319,6 +324,28 @@ func main() {
 				forceIncludeDirs = append(forceIncludeDirs, d)
 			}
 		}
+	}
+
+	// User's -exclude overrides default force-includes:
+	// if user explicitly excluded a dir, remove it from force-includes
+	if len(userExcludes) > 0 {
+		var filtered []string
+		for _, inc := range forceIncludeDirs {
+			incClean := normPath(inc)
+			keep := true
+			for _, exc := range userExcludes {
+				excClean := normPath(exc)
+				// Drop force-include if it matches or is inside user's exclude
+				if incClean == excClean || strings.HasPrefix(incClean, excClean+string(os.PathSeparator)) {
+					keep = false
+					break
+				}
+			}
+			if keep {
+				filtered = append(filtered, inc)
+			}
+		}
+		forceIncludeDirs = filtered
 	}
 
 	// ── Resolve search modes ───────────────────────────────────────
