@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strings"
 )
 
@@ -33,7 +32,7 @@ var defaultExcludeLinux = []string{
 }
 
 var defaultExcludeWindows = []string{
-	`C:\Windows`,
+	`C:\Windows`, `C:\Program Files`, `C:\Program Files (x86)`,
 }
 
 // ─── Force-include subdirs inside excluded dirs ────────────────────
@@ -88,7 +87,7 @@ var defaultExtPatterns = []string{
 	"*.rsa", "*.zip", "*.tar", "*.rar", "*.gz", "*.7z",
 	"*.ini", "*.yaml", "*.yml", "*.toml", "*.json", "*.xml",
 	"*.env.*",
-	"*.bak", "*.old", 
+	"*.bak", "*.old",
 	"*.sql", "*.dump", "*.sqlite", "*.db",
 	"*.ovpn", "*.rdp",
 	"*.pcap",
@@ -209,27 +208,6 @@ func isInsideExcludedZone(filePath string, excludeDirs []string, forceInclude []
 	return true
 }
 
-// prioritySort puts high-value findings first, low-noise stuff later.
-func prioritySort(files []string) {
-	sort.SliceStable(files, func(i, j int) bool {
-		f1 := strings.ToLower(files[i])
-		f2 := strings.ToLower(files[j])
-
-		lowPriority := func(s string) bool {
-			return strings.HasSuffix(s, ".kdbx") ||
-				strings.HasSuffix(s, ".conf") ||
-				strings.HasSuffix(s, ".cfg")
-			
-		}
-		iLow := lowPriority(f1)
-		jLow := lowPriority(f2)
-		if iLow != jLow {
-			return !iLow
-		}
-		return files[i] < files[j]
-	})
-}
-
 // ═══════════════════════════════════════════════════════════════════
 //  Main
 // ═══════════════════════════════════════════════════════════════════
@@ -257,8 +235,8 @@ func main() {
 	noExtFlag := flag.Bool("no-ext", false, "Search for files without extension")
 	namesFlag := flag.Bool("names", false, "Search for known sensitive filenames")
 	allFlag := flag.Bool("all", false, "Enable all search modes (ext + no-ext + names)")
+	outFlag := flag.String("out", "", "Write results to file (e.g. -out results.txt)")
 	helpFlag := flag.Bool("help", false, "Show help")
-
 
 	flag.Usage = func() {
 		fmt.Println(banner)
@@ -271,6 +249,7 @@ func main() {
 		fmt.Printf("  %s -ext '*.pem,*.key' -no-ext       # custom extensions + extensionless files\n", os.Args[0])
 		fmt.Printf("  %s -path /opt,/srv -names            # custom paths, known filenames only\n", os.Args[0])
 		fmt.Printf("  %s -regex '.*\\.db$' -ext '*.sql'    # regex + glob combined\n", os.Args[0])
+		fmt.Printf("  %s -out results.txt                     # save results to file\n", os.Args[0])
 	}
 
 	flag.Parse()
@@ -279,6 +258,8 @@ func main() {
 		flag.Usage()
 		return
 	}
+
+	fmt.Fprint(os.Stderr, banner)
 
 	// ── Figure out which flags the user actually passed ────────────
 	explicitFlags := make(map[string]bool)
@@ -298,8 +279,10 @@ func main() {
 	}
 
 	// ── Resolve scan paths ─────────────────────────────────────────
+	customPaths := false
 	scanPaths := defaultPaths
 	if *pathFlag != "" {
+		customPaths = true
 		scanPaths = nil
 		for _, p := range strings.Split(*pathFlag, ",") {
 			p = strings.TrimSpace(p)
@@ -310,7 +293,12 @@ func main() {
 	}
 
 	// ── Resolve exclude / force-include dirs ───────────────────────
-	excludeDirs := append([]string{}, defaultExclude...)
+	// If user passed -path explicitly, don't apply default OS excludes —
+	// they know what they're scanning. Only -exclude flag applies.
+	var excludeDirs []string
+	if !customPaths {
+		excludeDirs = append(excludeDirs, defaultExclude...)
+	}
 	if *excludeFlag != "" {
 		for _, d := range strings.Split(*excludeFlag, ",") {
 			d = strings.TrimSpace(d)
@@ -320,7 +308,10 @@ func main() {
 		}
 	}
 
-	forceIncludeDirs := append([]string{}, defaultForceInclude...)
+	var forceIncludeDirs []string
+	if !customPaths {
+		forceIncludeDirs = append(forceIncludeDirs, defaultForceInclude...)
+	}
 	if *includeFlag != "" {
 		for _, d := range strings.Split(*includeFlag, ",") {
 			d = strings.TrimSpace(d)
@@ -377,11 +368,23 @@ func main() {
 		}
 	}
 
-	// ── Walk ───────────────────────────────────────────────────────
-	usingDefaultSort := !anySearchFlag
+	// ── Prepare output file if requested ───────────────────────────
+	var outFile *os.File
+	if *outFlag != "" {
+		var err error
+		outFile, err = os.Create(*outFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] Cannot create output file: %v\n", err)
+			os.Exit(1)
+		}
+		defer outFile.Close()
+		fmt.Fprintf(os.Stderr, "[*] Writing results to %s\n", *outFlag)
+	}
 
-	var filesFound []string
+	// ── Walk ───────────────────────────────────────────────────────
 	seen := make(map[string]bool)
+	scannedDirs := 0
+	matchCount := 0
 
 	for _, root := range scanPaths {
 		info, err := os.Stat(root)
@@ -394,6 +397,8 @@ func main() {
 			continue
 		}
 
+		fmt.Fprintf(os.Stderr, "[*] Scanning %s ...\n", root)
+
 		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return filepath.SkipDir
@@ -403,12 +408,31 @@ func main() {
 				if shouldSkipDir(path, excludeDirs, forceIncludeDirs) {
 					return filepath.SkipDir
 				}
+				scannedDirs++
+				if scannedDirs%500 == 0 {
+					fmt.Fprintf(os.Stderr, "\r[*] Scanned %d dirs, found %d files...", scannedDirs, matchCount)
+				}
 				return nil
 			}
 
 			// Skip files directly inside excluded zones (but outside force-includes)
 			if isInsideExcludedZone(path, excludeDirs, forceIncludeDirs) {
 				return nil
+			}
+
+			// Only process regular files.
+			// Symlinks → resolve, skip if target is dir or broken.
+			// Junctions/reparse points on Windows can report as non-dir non-regular → skip.
+			if !d.Type().IsRegular() {
+				if d.Type()&fs.ModeSymlink != 0 {
+					target, err := os.Stat(path)
+					if err != nil || target.IsDir() || !target.Mode().IsRegular() {
+						return nil
+					}
+					// Symlink to a regular file — continue matching
+				} else {
+					return nil
+				}
 			}
 
 			name := d.Name()
@@ -436,23 +460,18 @@ func main() {
 
 			if matched && !seen[path] {
 				seen[path] = true
-				filesFound = append(filesFound, path)
+				matchCount++
+				fmt.Println(path)
+				if outFile != nil {
+					fmt.Fprintln(outFile, path)
+				}
 			}
 
 			return nil
 		})
 	}
 
-	// ── Sort & output ──────────────────────────────────────────────
-	if usingDefaultSort {
-		prioritySort(filesFound)
-	} else {
-		sort.Strings(filesFound)
-	}
+	fmt.Fprintf(os.Stderr, "\r[*] Scanned %d dirs total.                    \n", scannedDirs)
 
-	for _, f := range filesFound {
-		fmt.Println(f)
-	}
-
-	fmt.Fprintf(os.Stderr, "\n[*] Done. Found %d files.\n", len(filesFound))
+	fmt.Fprintf(os.Stderr, "[*] Done. Found %d files.\n", matchCount)
 }
