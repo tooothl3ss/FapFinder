@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const banner = `
@@ -114,7 +115,6 @@ func matchKnownName(filePath string, name string) bool {
 	norm := filepath.ToSlash(filePath)
 	for _, known := range knownFileNames {
 		if strings.Contains(known, "/") {
-			// Path fragment — check suffix
 			if strings.HasSuffix(norm, "/"+known) {
 				return true
 			}
@@ -128,50 +128,142 @@ func matchKnownName(filePath string, name string) bool {
 }
 
 // hasNoExtension returns true if filename has no extension.
-// Dotfiles like ".env" are considered extensionless here.
-// "file.txt" → false, "id_rsa" → true, ".bashrc" → true
+// Dotfiles like ".bashrc" are considered extensionless; ".env.local" is not.
 func hasNoExtension(name string) bool {
 	if name == "" {
 		return false
 	}
-	// Strip leading dots to handle dotfiles
 	stripped := strings.TrimLeft(name, ".")
 	if stripped == "" {
-		return true // e.g. "..." — weird but extensionless
+		return true
 	}
 	return !strings.Contains(stripped, ".")
 }
 
-// normPath returns cleaned lowercase path for comparison.
+// normPath returns a cleaned, lowercase path for plain-string comparison.
 func normPath(p string) string {
 	return strings.ToLower(filepath.Clean(p))
 }
 
+// isGlobPattern reports whether s contains glob metacharacters.
+func isGlobPattern(s string) bool {
+	return strings.ContainsAny(s, "*?[")
+}
+
+// splitSlashPath splits a slash-normalized path into non-empty segments.
+func splitSlashPath(p string) []string {
+	var parts []string
+	for _, seg := range strings.Split(p, "/") {
+		if seg != "" {
+			parts = append(parts, seg)
+		}
+	}
+	return parts
+}
+
+// matchPathPattern does segment-by-segment glob matching between a concrete path
+// and a pattern (e.g. "C:\Users\*\AppData" or "/home/*/Downloads").
+//
+// Returns:
+//
+//	matched=true    → path exactly matches pattern, or is a descendant of a matched dir
+//	isAncestor=true → path is shallower and its segments match the pattern prefix —
+//	                  must be traversed to reach potential matches below
+func matchPathPattern(pathStr, pattern string) (matched, isAncestor bool) {
+	normP := filepath.ToSlash(strings.ToLower(filepath.Clean(pathStr)))
+	normQ := filepath.ToSlash(strings.ToLower(filepath.Clean(pattern)))
+
+	pParts := splitSlashPath(normP)
+	qParts := splitSlashPath(normQ)
+
+	minLen := len(pParts)
+	if len(qParts) < minLen {
+		minLen = len(qParts)
+	}
+
+	for i := 0; i < minLen; i++ {
+		ok, err := filepath.Match(qParts[i], pParts[i])
+		if err != nil || !ok {
+			return false, false
+		}
+	}
+
+	switch {
+	case len(pParts) == len(qParts):
+		return true, false // exact depth — matched
+	case len(pParts) < len(qParts):
+		return false, true // path is shallower — ancestor
+	default:
+		return true, false // path is deeper — descendant of matched dir
+	}
+}
+
+// expandGlobPaths expands paths containing glob metacharacters into actual directories.
+// Plain paths are passed through unchanged.
+func expandGlobPaths(paths []string) []string {
+	var result []string
+	for _, p := range paths {
+		if !isGlobPattern(p) {
+			result = append(result, p)
+			continue
+		}
+		matches, err := filepath.Glob(p)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] Invalid path pattern %q: %v\n", p, err)
+			continue
+		}
+		if len(matches) == 0 {
+			fmt.Fprintf(os.Stderr, "[!] No directories matched pattern: %s\n", p)
+			continue
+		}
+		for _, m := range matches {
+			info, err := os.Stat(m)
+			if err == nil && info.IsDir() {
+				result = append(result, m)
+			}
+		}
+	}
+	return result
+}
+
+// isDirExcluded returns true if dirPath is covered by excl (plain path or glob pattern).
+// For plain paths it checks exact match or subdir prefix.
+// For glob patterns it uses segment-by-segment matching (matched or descendant).
+func isDirExcluded(dirPath, excl string) bool {
+	if isGlobPattern(excl) {
+		matched, _ := matchPathPattern(dirPath, excl)
+		return matched
+	}
+	clean := normPath(dirPath)
+	exclClean := normPath(excl)
+	return clean == exclClean || strings.HasPrefix(clean, exclClean+string(os.PathSeparator))
+}
+
 // shouldSkipDir decides whether to skip a directory during walk.
 // It handles the "exclude dir but force-include certain subdirs" logic.
+// Supports both plain paths and glob patterns in excludeDirs.
 func shouldSkipDir(dirPath string, excludeDirs []string, forceInclude []string) bool {
 	clean := normPath(dirPath)
 
 	isExcluded := false
 	for _, exc := range excludeDirs {
-		excClean := normPath(exc)
-		if clean == excClean || strings.HasPrefix(clean, excClean+string(os.PathSeparator)) {
+		if isDirExcluded(dirPath, exc) {
 			isExcluded = true
 			break
 		}
+		// If isDirExcluded returned false for a pattern, the dir may be an ancestor
+		// that needs to be traversed — isExcluded stays false, which is correct.
 	}
 	if !isExcluded {
 		return false
 	}
 
-	// Check if this dir IS a force-include or is an ancestor leading to one
+	// Check if this dir IS a force-include or is an ancestor/descendant of one.
 	for _, inc := range forceInclude {
 		incClean := normPath(inc)
-		// This dir is the included path or inside it → don't skip
 		if clean == incClean || strings.HasPrefix(clean, incClean+string(os.PathSeparator)) {
 			return false
 		}
-		// This dir is an ancestor of the included path → don't skip (need to traverse through)
 		if strings.HasPrefix(incClean, clean+string(os.PathSeparator)) {
 			return false
 		}
@@ -181,18 +273,28 @@ func shouldSkipDir(dirPath string, excludeDirs []string, forceInclude []string) 
 }
 
 // isInsideExcludedZone returns true if a FILE is inside an excluded dir
-// but NOT inside a force-included subdir. Used to filter out files that
-// live in excluded dirs outside of force-included subdirs
-// (e.g. C:\Windows\explorer.exe should be skipped, but C:\Windows\Temp\log.txt should not).
+// but NOT inside a force-included subdir.
+// Supports both plain paths and glob patterns in excludeDirs.
 func isInsideExcludedZone(filePath string, excludeDirs []string, forceInclude []string) bool {
 	clean := normPath(filePath)
 
 	inExclude := false
 	for _, exc := range excludeDirs {
-		excClean := normPath(exc)
-		if strings.HasPrefix(clean, excClean+string(os.PathSeparator)) {
-			inExclude = true
-			break
+		if isGlobPattern(exc) {
+			// Check whether the file's parent directory (or any ancestor) is inside
+			// a pattern-matched dir. matchPathPattern handles the descendant case:
+			// a parent deeper than the pattern still returns matched=true.
+			matched, _ := matchPathPattern(filepath.Dir(filePath), exc)
+			if matched {
+				inExclude = true
+				break
+			}
+		} else {
+			excClean := normPath(exc)
+			if strings.HasPrefix(clean, excClean+string(os.PathSeparator)) {
+				inExclude = true
+				break
+			}
 		}
 	}
 	if !inExclude {
@@ -227,10 +329,10 @@ func main() {
 	}
 
 	// ── Flags ──────────────────────────────────────────────────────
-	pathFlag := flag.String("path", "", "Comma-separated root paths to scan (overrides OS defaults)")
+	pathFlag := flag.String("path", "", "Comma-separated root paths to scan; supports glob patterns (e.g. 'C:\\Users\\*\\Downloads')")
 	extFlag := flag.String("ext", "", "Comma-separated glob patterns (e.g. '*.txt,*.csv')")
 	regexFlag := flag.String("regex", "", "Regex to match filenames (e.g. '(?i)pass')")
-	excludeFlag := flag.String("exclude", "", "Comma-separated extra dirs to exclude")
+	excludeFlag := flag.String("exclude", "", "Comma-separated dirs to exclude; supports glob patterns (e.g. 'C:\\Users\\*\\AppData')")
 	includeFlag := flag.String("include", "", "Comma-separated dirs to force-include inside excluded dirs")
 	noExtFlag := flag.Bool("no-ext", false, "Search for files without extension")
 	namesFlag := flag.Bool("names", false, "Search for known sensitive filenames")
@@ -238,20 +340,25 @@ func main() {
 	outFlag := flag.String("out", "", "Write results to file (e.g. -out results.txt)")
 	helpFlag := flag.Bool("help", false, "Show help")
 
-	flag.CommandLine.SetOutput(os.Stdout)
+	flag.CommandLine.SetOutput(os.Stderr)
 	flag.Usage = func() {
-		fmt.Println(banner)
-		fmt.Printf("Usage: %s [options]\n\n", os.Args[0])
-		fmt.Println("Options:")
+		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "Options:")
 		flag.PrintDefaults()
-		fmt.Println("\nExamples:")
-		fmt.Printf("  %s                                  # default scan (ext + names + no-ext)\n", os.Args[0])
-		fmt.Printf("  %s -regex '(?i)(pass|secret|token)' # regex only\n", os.Args[0])
-		fmt.Printf("  %s -ext '*.pem,*.key' -no-ext       # custom extensions + extensionless files\n", os.Args[0])
-		fmt.Printf("  %s -path /opt,/srv -names            # custom paths, known filenames only\n", os.Args[0])
-		fmt.Printf("  %s -regex '.*\\.db$' -ext '*.sql'    # regex + glob combined\n", os.Args[0])
-		fmt.Printf("  %s -exclude 'C:\\Temp' -out res.txt  # exclude dir + save to file\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "\nExamples:")
+		fmt.Fprintf(os.Stderr, "  %s                                          # default scan (ext + names + no-ext)\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -regex '(?i)(pass|secret|token)'         # regex only\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -ext '*.pem,*.key' -no-ext               # custom extensions + extensionless\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -path /opt,/srv -names                   # custom paths, known names only\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -path 'C:\\Users\\*\\Downloads'           # scan Downloads for every user\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -exclude 'C:\\Users\\*\\AppData'          # exclude AppData for every user\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -regex '.*\\.db$' -ext '*.sql'           # regex + glob combined\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -exclude 'C:\\Temp' -out res.txt         # exclude dir + save to file\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -exclude /etc -include /etc/nginx        # force-include inside excluded dir\n", os.Args[0])
 	}
+
+	// Print banner before Parse so it appears even on flag errors.
+	fmt.Fprint(os.Stderr, banner)
 
 	flag.Parse()
 
@@ -259,8 +366,6 @@ func main() {
 		flag.Usage()
 		return
 	}
-
-	fmt.Fprint(os.Stderr, banner)
 
 	// ── Figure out which flags the user actually passed ────────────
 	explicitFlags := make(map[string]bool)
@@ -284,13 +389,14 @@ func main() {
 	scanPaths := defaultPaths
 	if *pathFlag != "" {
 		customPaths = true
-		scanPaths = nil
+		var rawPaths []string
 		for _, p := range strings.Split(*pathFlag, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" {
-				scanPaths = append(scanPaths, p)
+				rawPaths = append(rawPaths, p)
 			}
 		}
+		scanPaths = expandGlobPaths(rawPaths)
 	}
 
 	// ── Resolve exclude / force-include dirs ───────────────────────
@@ -301,7 +407,6 @@ func main() {
 		excludeDirs = append(excludeDirs, defaultExclude...)
 	}
 
-	// User-specified excludes (these take priority over default force-includes)
 	var userExcludes []string
 	if *excludeFlag != "" {
 		for _, d := range strings.Split(*excludeFlag, ",") {
@@ -327,7 +432,7 @@ func main() {
 	}
 
 	// User's -exclude overrides default force-includes:
-	// if user explicitly excluded a dir, remove it from force-includes
+	// if user explicitly excluded a dir, remove it from force-includes.
 	if len(userExcludes) > 0 {
 		var filtered []string
 		for _, inc := range forceIncludeDirs {
@@ -335,7 +440,6 @@ func main() {
 			keep := true
 			for _, exc := range userExcludes {
 				excClean := normPath(exc)
-				// Drop force-include if it matches or is inside user's exclude
 				if incClean == excClean || strings.HasPrefix(incClean, excClean+string(os.PathSeparator)) {
 					keep = false
 					break
@@ -349,7 +453,6 @@ func main() {
 	}
 
 	// ── Resolve search modes ───────────────────────────────────────
-	// No explicit search flags → default mode (all three on)
 	anySearchFlag := explicitFlags["ext"] || explicitFlags["regex"] ||
 		explicitFlags["no-ext"] || explicitFlags["names"] || explicitFlags["all"]
 
@@ -368,7 +471,6 @@ func main() {
 		useNoExt = true
 		useNames = true
 	} else {
-		// User picked specific modes
 		if explicitFlags["ext"] {
 			useGlob = true
 		}
@@ -390,7 +492,7 @@ func main() {
 					patterns = append(patterns, p)
 				}
 			}
-		} else if useGlob && !explicitFlags["ext"] {
+		} else if !explicitFlags["ext"] {
 			patterns = defaultExtPatterns
 		}
 	}
@@ -409,9 +511,10 @@ func main() {
 	}
 
 	// ── Walk ───────────────────────────────────────────────────────
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	scannedDirs := 0
 	matchCount := 0
+	start := time.Now()
 
 	for _, root := range scanPaths {
 		info, err := os.Stat(root)
@@ -437,12 +540,12 @@ func main() {
 				}
 				scannedDirs++
 				if scannedDirs%500 == 0 {
-					fmt.Fprintf(os.Stderr, "\r[*] Scanned %d dirs, found %d files...", scannedDirs, matchCount)
+					fmt.Fprintf(os.Stderr, "[*] Scanned %d dirs, found %d files...\n", scannedDirs, matchCount)
 				}
 				return nil
 			}
 
-			// Skip files directly inside excluded zones (but outside force-includes)
+			// Skip files directly inside excluded zones (but outside force-includes).
 			if isInsideExcludedZone(path, excludeDirs, forceIncludeDirs) {
 				return nil
 			}
@@ -456,7 +559,6 @@ func main() {
 					if err != nil || target.IsDir() || !target.Mode().IsRegular() {
 						return nil
 					}
-					// Symlink to a regular file — continue matching
 				} else {
 					return nil
 				}
@@ -465,32 +567,27 @@ func main() {
 			name := d.Name()
 			matched := false
 
-			// 1. Glob patterns
 			if useGlob && len(patterns) > 0 && matchGlob(name, patterns) {
 				matched = true
 			}
-
-			// 2. Regex
 			if useRegex && compiledRegex.MatchString(name) {
 				matched = true
 			}
-
-			// 3. Files without extension
 			if useNoExt && hasNoExtension(name) {
 				matched = true
 			}
-
-			// 4. Known filenames
 			if useNames && matchKnownName(path, name) {
 				matched = true
 			}
 
-			if matched && !seen[path] {
-				seen[path] = true
-				matchCount++
-				fmt.Println(path)
-				if outFile != nil {
-					fmt.Fprintln(outFile, path)
+			if matched {
+				if _, ok := seen[path]; !ok {
+					seen[path] = struct{}{}
+					matchCount++
+					fmt.Println(path)
+					if outFile != nil {
+						fmt.Fprintln(outFile, path)
+					}
 				}
 			}
 
@@ -498,7 +595,6 @@ func main() {
 		})
 	}
 
-	fmt.Fprintf(os.Stderr, "\r[*] Scanned %d dirs total.                    \n", scannedDirs)
-
-	fmt.Fprintf(os.Stderr, "[*] Done. Found %d files.\n", matchCount)
+	fmt.Fprintf(os.Stderr, "[+] Done. Scanned %d dirs, found %d matches in %v.\n",
+		scannedDirs, matchCount, time.Since(start).Round(time.Millisecond))
 }
