@@ -19,7 +19,8 @@ Cross-platform, fully configurable, and equipped with four independent search mo
 | **Known names** | `-names` | Match against a built-in list of sensitive filenames and path fragments |
 | **All** | `-all` | Enable Glob + No-extension + Known names at once |
 
-Running without any search flag is equivalent to `-all` — everything is on by default.
+> `-all` does **not** enable regex — pass `-regex` explicitly if you need it.  
+> Running without any search flag is equivalent to `-all` — everything is on by default.
 
 ---
 
@@ -43,6 +44,9 @@ Running without any search flag is equivalent to `-all` — everything is on by 
 
 `C:\Windows\Temp`, `C:\Windows\Tasks` — these are always scanned even though `C:\Windows` is excluded.
 
+> **Note:** if `-path` is specified, OS default excludes are **not applied** — only `-exclude` matters.  
+> Doing `-path C:\` will scan everything including `C:\Windows` unless you also pass `-exclude`.
+
 **Default glob patterns** (used when `-ext` is not specified)
 
 ```
@@ -53,17 +57,34 @@ Running without any search flag is equivalent to `-all` — everything is on by 
 *.sqlite *.db *.ovpn *.rdp   *.pcap
 ```
 
-**Built-in known filenames** include SSH keys, shell history, `.env` files, AWS/Azure credentials, browser configs, password manager databases, and more.
+**Built-in known filenames** (`-names` / `-all`)
+
+| Category | Files |
+|----------|-------|
+| SSH | `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, `authorized_keys`, `authorized_keys2`, `known_hosts` |
+| System auth | `shadow`, `passwd`, `master.passwd`, `opasswd`, `login.defs` |
+| Credentials / tokens | `credentials`, `token`, `secrets`, `.env`, `.env.local`, `.env.production`, `.env.development`, `.netrc`, `.pgpass`, `.my.cnf` |
+| Docker | `.docker/config.json` |
+| Shell history | `.bash_history`, `.zsh_history`, `.sh_history`, `.python_history`, `.mysql_history`, `.psql_history` |
+| Shell config | `.bashrc`, `.bash_profile`, `.zshrc`, `.profile` |
+| Web | `.htpasswd`, `.htaccess` |
+| Cloud | `.aws/credentials`, `.aws/config`, `.azure/accessTokens.json` |
+| Infra / build | `Dockerfile`, `Makefile`, `Vagrantfile`, `docker-compose.yml`, `docker-compose.yaml` |
+| Git | `.git-credentials`, `.gitconfig` |
+| GPG | `trustdb.gpg` |
+| Misc | `wp-config.php`, `LocalSettings.php` |
+
+Path fragments (e.g. `.aws/credentials`, `.docker/config.json`) are matched against the full file path, not just the filename.
 
 ---
 
 ## Options
 
 ```
--path   string   Comma-separated root paths to scan (overrides OS defaults)
+-path   string   Comma-separated root paths to scan; supports glob patterns (e.g. 'C:\Users\*\Downloads')
 -ext    string   Comma-separated glob patterns, e.g. '*.txt,*.csv'
 -regex  string   Regex to match filenames, e.g. '(?i)pass'
--exclude string  Comma-separated extra dirs to exclude
+-exclude string  Comma-separated dirs to exclude; supports glob patterns (e.g. 'C:\Users\*\AppData')
 -include string  Comma-separated dirs to force-include inside excluded dirs
 -no-ext          Search for files without an extension
 -names           Search for known sensitive filenames
@@ -72,7 +93,6 @@ Running without any search flag is equivalent to `-all` — everything is on by 
 -help            Show help
 ```
 
-If `-path` is specified, OS default excludes are not applied — only `-exclude` matters.  
 If `-exclude` conflicts with a default force-include, the exclude wins.
 
 ---
@@ -101,8 +121,14 @@ If `-exclude` conflicts with a default force-include, the exclude wins.
 # Force-include a subdir inside an excluded dir
 ./FapFinder -exclude /etc -include /etc/nginx
 
+# Scan Downloads for every user on Windows (glob path)
+./FapFinder -path 'C:\Users\*\Downloads'
+
+# Exclude AppData for every user (glob exclude)
+./FapFinder -exclude 'C:\Users\*\AppData'
+
 # Full Windows scan, all modes, save output
-./FapFinder -path 'C:\' -all -out loot.txt
+./FapFinder -path 'C:\' -exclude 'C:\Windows,C:\Program Files,C:\Program Files (x86)' -all -out loot.txt
 ```
 
 ---

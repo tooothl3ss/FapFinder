@@ -492,6 +492,10 @@ func main() {
 					patterns = append(patterns, p)
 				}
 			}
+			if len(patterns) == 0 {
+				fmt.Fprintln(os.Stderr, "[!] -ext provided but no valid patterns found; glob mode disabled")
+				useGlob = false
+			}
 		} else if !explicitFlags["ext"] {
 			patterns = defaultExtPatterns
 		}
